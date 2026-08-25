@@ -3,9 +3,12 @@ cli.py — cmdclip command-line interface
 Built with Typer + Rich for cross-platform terminal UI.
 """
 
+import importlib.metadata
+import os
+import platform
 import subprocess
 import sys
-import platform
+from pathlib import Path
 from typing import Optional
 
 import typer
@@ -15,8 +18,28 @@ from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 from rich import print as rprint
 
-from cmdclip import storage, ai
+from cmdclip import storage, ai, platform_utils
 from cmdclip.templates import is_template, resolve_template, preview_template
+
+
+def version_callback(value: bool):
+    if value:
+        ver = importlib.metadata.version("cmdclip")
+        plat = platform_utils.get_platform_name()
+        if plat == "termux":
+            plat_str = "termux (Android)"
+        else:
+            plat_str = plat
+        backend = platform_utils.get_clipboard_backend()
+        py_ver = sys.version.split()[0]
+        console.print(
+            f"cmdclip {ver}\n"
+            f"Platform: {plat_str}\n"
+            f"Clipboard backend: {backend}\n"
+            f"Python: {py_ver}"
+        )
+        raise typer.Exit()
+
 
 app = typer.Typer(
     name="cmdclip",
@@ -27,6 +50,20 @@ config_app = typer.Typer(help="Manage cmdclip configuration.")
 app.add_typer(config_app, name="config")
 
 console = Console()
+
+
+@app.callback()
+def main_callback(
+    version: Optional[bool] = typer.Option(
+        None,
+        "--version",
+        "-V",
+        help="Show version and system info.",
+        callback=version_callback,
+        is_eager=True,
+    ),
+):
+    pass
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -40,12 +77,12 @@ def _is_dangerous(cmd: str) -> bool:
 
 def _copy_to_clipboard(text: str) -> bool:
     """Copy text to system clipboard. Returns True on success."""
-    try:
-        import pyperclip
-        pyperclip.copy(text)
-        return True
-    except Exception:
-        return False
+    return platform_utils.copy_to_clipboard(text)
+
+
+def _paste_from_clipboard() -> Optional[str]:
+    """Paste text from system clipboard. Returns string or None."""
+    return platform_utils.paste_from_clipboard()
 
 
 def _run_command(cmd: str) -> None:
@@ -151,7 +188,7 @@ def search(
 def run(
     id_: str = typer.Argument(..., metavar="ID", help="Command ID to run."),
     dry_run: bool = typer.Option(False, "--dry-run", "-d", help="Preview only, don't execute."),
-    copy: bool = typer.Option(False, "--copy", "-c", help="Copy to clipboard instead of running."),
+    exec_: bool = typer.Option(False, "--exec", "-e", help="Execute the command instead of copying."),
 ):
     """Run a saved command by ID."""
     entry = storage.get_command_by_id(id_)
@@ -190,15 +227,46 @@ def run(
             console.print("[yellow]Cancelled.[/yellow]")
             raise typer.Exit()
 
-    if copy:
-        if _copy_to_clipboard(cmd):
-            console.print(f"[green]✓ Copied to clipboard:[/green] {cmd}")
-        else:
-            console.print(f"[yellow]Could not access clipboard. Command:[/yellow] {cmd}")
-    else:
+    if exec_:
         console.print(f"[dim]$ {cmd}[/dim]")
         storage.increment_use_count(id_)
         _run_command(cmd)
+    else:
+        if _copy_to_clipboard(cmd):
+            console.print(f"[green]✓ Copied to clipboard:[/green] {cmd}")
+        else:
+            console.print(f"[yellow]Could not access clipboard. Command:[/yellow]\n{cmd}")
+
+
+@app.command("termux-setup")
+def termux_setup():
+    """Setup shell aliases and integration for Termux."""
+    if not platform_utils.is_termux():
+        console.print("[red]Error: termux-setup is only supported on Android Termux.[/red]")
+        raise typer.Exit(1)
+
+    shell = os.environ.get("SHELL", "")
+    rc_file = ".zshrc" if "zsh" in shell else ".bashrc"
+    rc_path = Path.home() / rc_file
+
+    snippet = (
+        "\n# cmdclip shell integration (Termux)\n"
+        "alias cc='cmdclip run --exec'\n"
+        "alias ca='cmdclip add'\n"
+        "alias cs='cmdclip search'\n\n"
+        "# Auto-save last command to cmdclip\n"
+        "# Add this to your .bashrc:\n"
+        "# PROMPT_COMMAND='cmdclip add \"$(history 1 | sed \"s/^[ ]*[0-9]*[ ]*//\")\" --no-ai --name \"auto\" 2>/dev/null || true'\n"
+    )
+
+    console.print(Panel(snippet, title="Termux Shell Integration", border_style="cyan"))
+
+    if Confirm.ask(f"Do you want to append these aliases to [cyan]~/{rc_file}[/cyan]?", default=True):
+        with open(rc_path, "a", encoding="utf-8") as f:
+            f.write(snippet)
+        console.print(f"[green]✓ Aliases successfully added to {rc_path}[/green]")
+    else:
+        console.print("[yellow]Cancelled.[/yellow]")
 
 
 @app.command()
