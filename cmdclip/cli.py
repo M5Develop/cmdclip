@@ -126,6 +126,7 @@ def add(
     note: str = typer.Option("", "--note", "-n", help="Short description."),
     name: str = typer.Option("", "--name", help="Optional short name/alias."),
     no_ai: bool = typer.Option(False, "--no-ai", help="Skip AI tag suggestions."),
+    model: Optional[str] = typer.Option(None, "--model", "-m", help="AI model override."),
 ):
     """Add a new command to your clipboard."""
     tag_list: list[str] = []
@@ -134,7 +135,7 @@ def add(
         tag_list = [t.strip() for t in tags.split(",") if t.strip()]
     elif not no_ai:
         with console.status("[cyan]Suggesting tags via AI...[/cyan]"):
-            suggested = ai.suggest_tags(cmd)
+            suggested = ai.suggest_tags(cmd, model=model)
         if suggested:
             console.print(f"[cyan]Suggested tags:[/cyan] {', '.join(suggested)}")
             accept = Confirm.ask("Accept these tags?", default=True)
@@ -272,6 +273,7 @@ def termux_setup():
 @app.command()
 def explain(
     id_: str = typer.Argument(..., metavar="ID", help="Command ID to explain."),
+    model: Optional[str] = typer.Option(None, "--model", "-m", help="AI model override."),
 ):
     """Use AI to explain what a command does."""
     entry = storage.get_command_by_id(id_)
@@ -280,7 +282,7 @@ def explain(
         raise typer.Exit(1)
 
     with console.status("[cyan]Asking AI...[/cyan]"):
-        explanation = ai.explain_command(entry["cmd"])
+        explanation = ai.explain_command(entry["cmd"], model=model)
 
     console.print(Panel(
         f"[bold]Command:[/bold] {entry['cmd']}\n\n{explanation}",
@@ -458,13 +460,129 @@ def share(
 
 # ─── Config subcommands ────────────────────────────────────────────────────────
 
+@config_app.command("set-backend")
+def config_set_backend(
+    backend: str = typer.Argument(..., help="AI backend provider name."),
+):
+    """Set active AI backend provider."""
+    backend_lower = backend.lower()
+    if backend_lower not in ai.VALID_BACKENDS:
+        console.print(f"[red]Invalid backend '{backend}'. Supported backends: {', '.join(ai.VALID_BACKENDS)}[/red]")
+        raise typer.Exit(1)
+
+    storage.set_config("ai_backend", backend_lower)
+    console.print(f"[green]✓ AI backend set to: {backend_lower}[/green]")
+
+
+@config_app.command("set-model")
+def config_set_model(
+    model: str = typer.Argument(..., help="Model name to use."),
+):
+    """Set active AI model."""
+    cfg = storage.get_config()
+    active_backend = cfg.get("ai_backend") or ai.get_backend()
+
+    if active_backend == "ollama":
+        storage.set_config("ollama_model", model)
+    elif active_backend == "lmstudio":
+        storage.set_config("lmstudio_model", model)
+    else:
+        storage.set_config("ai_model", model)
+
+    console.print(f"[green]✓ AI model set to: {model}[/green]")
+
+
 @config_app.command("set-key")
 def config_set_key(
-    key: str = typer.Argument(..., help="Your Groq API key."),
+    key: str = typer.Argument(..., help="Your API key."),
+    backend: Optional[str] = typer.Option(None, "--backend", "-b", help="Target AI backend."),
 ):
-    """Save your Groq API key to local config."""
-    storage.set_config("groq_api_key", key)
-    console.print("[green]✓ Groq API key saved.[/green]")
+    """Save API key to local config for a backend provider."""
+    if not backend:
+        if key.startswith("sk-or-"):
+            target_backend = "openrouter"
+        elif key.startswith("gsk_"):
+            target_backend = "groq"
+        elif key.startswith("sk-"):
+            target_backend = "openai"
+        else:
+            target_backend = "groq"
+    else:
+        target_backend = backend.lower()
+
+    if target_backend not in ai.VALID_BACKENDS:
+        console.print(f"[red]Invalid backend '{target_backend}'. Supported backends: {', '.join(ai.VALID_BACKENDS)}[/red]")
+        raise typer.Exit(1)
+
+    storage.set_config(f"{target_backend}_api_key", key)
+    console.print(f"[green]✓ Saved API key for {target_backend}.[/green]")
+
+
+@config_app.command("set-custom")
+def config_set_custom(
+    url: str = typer.Argument(..., help="Custom OpenAI-compatible API URL."),
+    model: str = typer.Argument(..., help="Custom model name."),
+    key: Optional[str] = typer.Option("", "--key", "-k", help="Optional API key."),
+):
+    """Configure custom OpenAI-compatible endpoint."""
+    storage.set_config("custom_ai_url", url)
+    storage.set_config("custom_ai_model", model)
+    if key is not None:
+        storage.set_config("custom_ai_key", key)
+    console.print("[green]✓ Custom AI endpoint saved.[/green]")
+
+
+@config_app.command("ai-status")
+def config_ai_status():
+    """Show current AI backend status and availability."""
+    cfg = storage.get_config()
+    active_backend = ai.get_backend()
+    is_auto = "ai_backend" not in cfg or not cfg.get("ai_backend")
+
+    endpoint = ai._get_endpoint_for_backend(active_backend)
+    model = ai._get_model_for_backend(active_backend)
+
+    if active_backend == "none":
+        status_str = "disabled"
+    elif active_backend in ("ollama", "lmstudio"):
+        check_url = "http://localhost:11434" if active_backend == "ollama" else "http://localhost:1234"
+        reachable = ai._is_server_reachable(check_url, timeout=2.0)
+        status_str = "✓ reachable" if reachable else "✗ not reachable"
+    else:
+        key = ai._get_key_for_backend(active_backend)
+        status_str = "✓ configured" if key or active_backend == "custom" else "✗ no key"
+
+    auto_str = "yes (no ai_backend in config)" if is_auto else "no"
+
+    panel_text = (
+        f"Active backend : {active_backend}\n"
+        f"Model          : {model or 'none'}\n"
+        f"Endpoint       : {endpoint or 'none'}\n"
+        f"Server status  : {status_str}\n"
+        f"Auto-detected  : {auto_str}"
+    )
+    console.print(Panel(panel_text, title="AI Backend Status", border_style="cyan"))
+
+    backends_info = [
+        ("groq", "GROQ_API_KEY set" if os.environ.get("GROQ_API_KEY") else ("key saved" if cfg.get("groq_api_key") else "no key"),
+         bool(os.environ.get("GROQ_API_KEY") or cfg.get("groq_api_key"))),
+        ("openrouter", "OPENROUTER_API_KEY set" if os.environ.get("OPENROUTER_API_KEY") else ("key saved" if cfg.get("openrouter_api_key") else "no key"),
+         bool(os.environ.get("OPENROUTER_API_KEY") or cfg.get("openrouter_api_key"))),
+        ("ollama", "server reachable" if ai._is_server_reachable("http://localhost:11434", timeout=2.0) else "not reachable on :11434",
+         ai._is_server_reachable("http://localhost:11434", timeout=2.0)),
+        ("lmstudio", "server reachable" if ai._is_server_reachable("http://localhost:1234", timeout=2.0) else "not reachable on :1234",
+         ai._is_server_reachable("http://localhost:1234", timeout=2.0)),
+        ("openai", "OPENAI_API_KEY set" if os.environ.get("OPENAI_API_KEY") else ("key saved" if cfg.get("openai_api_key") else "no key"),
+         bool(os.environ.get("OPENAI_API_KEY") or cfg.get("openai_api_key"))),
+        ("custom", "URL configured" if cfg.get("custom_ai_url") else "not configured",
+         bool(cfg.get("custom_ai_url"))),
+    ]
+
+    console.print("[bold]Other available:[/bold]")
+    for b_name, reason, avail in backends_info:
+        mark = "✓" if avail else "✗"
+        color = "green" if avail else "red"
+        console.print(f"  [{color}]{mark}[/{color}] {b_name:<11} ({reason})")
 
 
 @config_app.command("show")

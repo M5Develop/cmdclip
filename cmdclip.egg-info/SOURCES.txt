@@ -3,6 +3,7 @@ README.md
 pyproject.toml
 cmdclip/ai.py
 cmdclip/cli.py
+cmdclip/platform_utils.py
 cmdclip/storage.py
 cmdclip/templates.py
 cmdclip.egg-info/PKG-INFO
@@ -11,3 +12,4 @@ cmdclip.egg-info/dependency_links.txt
 cmdclip.egg-info/entry_points.txt
 cmdclip.egg-info/requires.txt
 cmdclip.egg-info/top_level.txt
+tests/test_cmdclip.py

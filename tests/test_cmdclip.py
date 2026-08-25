@@ -1,7 +1,8 @@
 """
-Tests for cmdclip cross-platform features and CLI functionality.
+Tests for cmdclip cross-platform features, AI backends, and CLI functionality.
 """
 
+import json
 import os
 import shutil
 import tempfile
@@ -11,7 +12,7 @@ from unittest.mock import patch, MagicMock
 import pytest
 from typer.testing import CliRunner
 
-from cmdclip import platform_utils, storage, cli
+from cmdclip import platform_utils, storage, cli, ai
 
 runner = CliRunner()
 
@@ -24,7 +25,7 @@ def tmp_storage_dir(monkeypatch, tmp_path):
     return d
 
 
-# ─── Task 4 & 1: platform_utils Tests ─────────────────────────────────────────
+# ─── platform_utils Tests ─────────────────────────────────────────────────────
 
 def test_is_termux(monkeypatch, tmp_path):
     monkeypatch.delenv("TERMUX_VERSION", raising=False)
@@ -102,7 +103,7 @@ def test_copy_to_clipboard_fallbacks(monkeypatch):
             assert res is False
 
 
-# ─── Task 5: History Path Tests ───────────────────────────────────────────────
+# ─── History Path Tests ────────────────────────────────────────────────────────
 
 def test_get_history_path(monkeypatch, tmp_path):
     hist_file = tmp_path / "custom_hist"
@@ -120,7 +121,7 @@ def test_get_history_path(monkeypatch, tmp_path):
         assert storage.get_history_path() == zsh_hist
 
 
-# ─── Task 2, 3, 6: CLI Command Tests ──────────────────────────────────────────
+# ─── CLI Command Tests ─────────────────────────────────────────────────────────
 
 def test_version_flag():
     result = runner.invoke(cli.app, ["--version"])
@@ -169,3 +170,126 @@ def test_termux_setup_on_termux(tmp_path, monkeypatch):
             assert rc_file.exists()
             content = rc_file.read_text()
             assert "alias cc='cmdclip run --exec'" in content
+
+
+# ─── AI Backend System Tests ───────────────────────────────────────────────────
+
+def test_get_backend_autodetect_order(tmp_storage_dir, monkeypatch):
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    with patch("cmdclip.ai._is_server_reachable", return_value=False):
+        assert ai.get_backend() == "none"
+
+    # 1. GROQ_API_KEY
+    monkeypatch.setenv("GROQ_API_KEY", "gsk_123")
+    assert ai.get_backend() == "groq"
+
+    # 2. OPENROUTER_API_KEY
+    monkeypatch.delenv("GROQ_API_KEY")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-123")
+    assert ai.get_backend() == "openrouter"
+
+    # 3. OPENAI_API_KEY
+    monkeypatch.delenv("OPENROUTER_API_KEY")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-123")
+    assert ai.get_backend() == "openai"
+
+    # 4. Ollama reachable
+    monkeypatch.delenv("OPENAI_API_KEY")
+    def mock_reachable(url, timeout=2.0):
+        return "11434" in url
+    with patch("cmdclip.ai._is_server_reachable", side_effect=mock_reachable):
+        assert ai.get_backend() == "ollama"
+
+    # 5. LM Studio reachable
+    def mock_lm_reachable(url, timeout=2.0):
+        return "1234" in url
+    with patch("cmdclip.ai._is_server_reachable", side_effect=mock_lm_reachable):
+        assert ai.get_backend() == "lmstudio"
+
+    # 6. custom_ai_url in config
+    with patch("cmdclip.ai._is_server_reachable", return_value=False):
+        storage.set_config("custom_ai_url", "http://my-ai/v1")
+        assert ai.get_backend() == "custom"
+
+    # 7. groq_api_key in config
+    storage.set_config("custom_ai_url", "")
+    storage.set_config("groq_api_key", "gsk_saved")
+    assert ai.get_backend() == "groq"
+
+    # 8. openrouter_api_key saved
+    storage.set_config("groq_api_key", "")
+    storage.set_config("openrouter_api_key", "sk-or-saved")
+    assert ai.get_backend() == "openrouter"
+
+    # Config set overrides auto-detect
+    storage.set_config("ai_backend", "ollama")
+    assert ai.get_backend() == "ollama"
+
+
+def test_explain_command_none_backend(tmp_storage_dir):
+    storage.set_config("ai_backend", "none")
+    res = ai.explain_command("ls -la")
+    assert "[!] AI is disabled" in res
+
+
+def test_call_openai_compatible(monkeypatch):
+    class MockResponse:
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+        def read(self):
+            return json.dumps({"choices": [{"message": {"content": "Test explanation"}}]}).encode("utf-8")
+
+    with patch("urllib.request.urlopen", return_value=MockResponse()):
+        res = ai._call_openai_compatible(
+            base_url="https://api.openai.com/v1",
+            api_key="sk-test",
+            model="gpt-4o-mini",
+            system_prompt="sys",
+            user_prompt="user",
+        )
+        assert res == "Test explanation"
+
+
+def test_cli_config_commands(tmp_storage_dir):
+    # set-backend
+    res = runner.invoke(cli.app, ["config", "set-backend", "openrouter"])
+    assert res.exit_code == 0
+    assert storage.get_config().get("ai_backend") == "openrouter"
+
+    # set-model
+    res = runner.invoke(cli.app, ["config", "set-model", "mistral-large"])
+    assert res.exit_code == 0
+    assert storage.get_config().get("ai_model") == "mistral-large"
+
+    # set-key with auto-detect backend
+    res = runner.invoke(cli.app, ["config", "set-key", "sk-or-testkey"])
+    assert res.exit_code == 0
+    assert storage.get_config().get("openrouter_api_key") == "sk-or-testkey"
+
+    # set-custom
+    res = runner.invoke(cli.app, ["config", "set-custom", "http://localhost:8080/v1", "my-model", "--key", "secret"])
+    assert res.exit_code == 0
+    cfg = storage.get_config()
+    assert cfg.get("custom_ai_url") == "http://localhost:8080/v1"
+    assert cfg.get("custom_ai_model") == "my-model"
+    assert cfg.get("custom_ai_key") == "secret"
+
+    # ai-status
+    res = runner.invoke(cli.app, ["config", "ai-status"])
+    assert res.exit_code == 0
+    assert "AI Backend Status" in res.output
+
+
+def test_model_override_in_commands(tmp_storage_dir):
+    storage.set_config("ai_backend", "none")
+    entry = storage.add_command("git status", ["git"])
+
+    with patch("cmdclip.ai.explain_command", return_value="Git status explanation") as mock_explain:
+        res = runner.invoke(cli.app, ["explain", entry["id"], "--model", "llama3-70b"])
+        assert res.exit_code == 0
+        mock_explain.assert_called_once_with("git status", model="llama3-70b")
