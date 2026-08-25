@@ -4,18 +4,21 @@ Handles all read/write operations for commands and config.
 """
 
 import json
+import os
 import platform
 import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from cmdclip import platform_utils
+
 
 # ─── Paths ────────────────────────────────────────────────────────────────────
 
 def get_data_dir() -> Path:
     """Return the platform-appropriate data directory."""
-    if platform.system() == "Windows":
+    if platform_utils.get_platform_name() == "windows":
         base = Path.home() / "AppData" / "Local" / "cmdclip"
     else:
         base = Path.home() / ".cmdclip"
@@ -36,15 +39,28 @@ def get_quarantine_path() -> Path:
 
 
 def get_history_path() -> Optional[Path]:
-    """Return the shell history file path for the current OS."""
-    system = platform.system()
-    if system == "Windows":
-        p = Path.home() / "AppData/Roaming/Microsoft/Windows/PowerShell/PSReadLine/ConsoleHost_history.txt"
-    elif system == "Darwin":
+    """Return the shell history file path for the current OS / environment."""
+    histfile = os.environ.get("HISTFILE")
+    if histfile:
+        p = Path(histfile)
+        if p.exists():
+            return p
+
+    shell = os.environ.get("SHELL", "")
+    if "zsh" in shell:
         p = Path.home() / ".zsh_history"
-    else:
-        p = Path.home() / ".bash_history"
-    return p if p.exists() else None
+        if p.exists():
+            return p
+
+    p = Path.home() / ".bash_history"
+    if p.exists():
+        return p
+
+    p = Path("/data/data/com.termux/files/home/.bash_history")
+    if p.exists():
+        return p
+
+    return None
 
 
 # ─── DB helpers ───────────────────────────────────────────────────────────────

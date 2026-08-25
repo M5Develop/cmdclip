@@ -1,0 +1,135 @@
+Metadata-Version: 2.4
+Name: cmdclip
+Version: 1.0.1
+Summary: Smart cross-platform command clipboard manager — save, tag, search & run shell commands with AI-powered auto-tagging
+Author-email: M5 Dev <m5dev@proton.me>
+License: GPL-3.0
+Project-URL: Homepage, https://github.com/M5Develop/cmdclip
+Project-URL: Repository, https://github.com/M5Develop/cmdclip
+Project-URL: Issues, https://github.com/M5Develop/cmdclip/issues
+Keywords: cli,terminal,shell,command-manager,clipboard,snippets,productivity,ai,groq,cross-platform,linux,macos,windows,history,search,tags,devtools,sysadmin,automation,dotfiles
+Classifier: Development Status :: 4 - Beta
+Classifier: Environment :: Console
+Classifier: Intended Audience :: Developers
+Classifier: Intended Audience :: System Administrators
+Classifier: Intended Audience :: Information Technology
+Classifier: License :: OSI Approved :: GNU General Public License v3 (GPLv3)
+Classifier: Natural Language :: English
+Classifier: Operating System :: OS Independent
+Classifier: Operating System :: POSIX :: Linux
+Classifier: Operating System :: MacOS
+Classifier: Operating System :: Microsoft :: Windows
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Topic :: Utilities
+Classifier: Topic :: System :: Shells
+Classifier: Topic :: System :: System Shells
+Classifier: Topic :: Software Development :: Libraries :: Python Modules
+Classifier: Topic :: Terminals
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: typer>=0.12
+Requires-Dist: rich>=13
+Requires-Dist: pyperclip>=1.8
+Requires-Dist: groq>=0.9
+Provides-Extra: dev
+Requires-Dist: pytest>=8; extra == "dev"
+Requires-Dist: pytest-cov; extra == "dev"
+Dynamic: license-file
+
+# cmdclip 📋
+
+> A lightweight, offline-first, cross-platform clipboard manager with LAN Sync and secure secret tracking.
+> Built with Flutter and Material 3 — GPL-3.0 License.
+
+**cmdclip** is a modern, high-performance clipboard manager designed to run natively on **Windows**, **Linux**, and **Android** from a single codebase. It is 100% offline, requires no cloud accounts, no internet, and has absolutely zero telemetry.
+
+---
+
+## 🚀 Key Features
+
+1. **Clipboard History** — Polling-based background tracking captures everything you copy with accurate timestamps.
+2. **Pinning & Categories** — Organizes clips instantly. Pin important snippets to keep them at the top, or assign entries to custom user-defined categories (e.g., *Work*, *Terminal*, *Code*, *Personal*).
+3. **Secure Secret Mode** — One-tap toggle disables history recording. Copies during Secret Mode trigger a secure countdown timer that automatically overwrites/clears your system clipboard after a user-defined timeout (e.g., 30s, 60s).
+4. **Command Templates** — Supports placeholders like `ssh {user}@{host} -p {port=22}`. Prompts with a sleek, interactive input form to resolve variables, pre-filling defaults before copying the finalized command.
+5. **Regex Search** — Seamless regular expression search across your history with an easy toggle button.
+6. **Local LAN Sync** — Real-time clipboard sharing between desktops and Android over your local Wi-Fi network. Acts as both an HTTP server and a UDP client to perform auto-discovery and direct paired synchronization. No internet, cloud, or accounts required!
+7. **JSON & CSV Export/Import** — Easily back up, share, or migration-import history. Hand-written custom CSV state machine parser handles multi-line cells and quotes cleanly.
+
+---
+
+## 📂 Project Structure
+
+```
+.
+├── android/            # Android Native Platform Configuration
+├── linux/              # Linux Native Platform Configuration
+├── windows/            # Windows Native Platform Configuration
+├── lib/
+│   ├── main.dart       # Responsive Material 3 UI Layout & View Controllers
+│   ├── models.dart     # ClipboardItem, CommandTemplate, SyncPeer Definitions
+│   ├── storage.dart    # Persistent cached JSON local storage & CSV/JSON Export/Import Engine
+│   ├── sync_service.dart # Background Poller, HTTP Sync Server, UDP LAN Auto-Discovery
+│   └── secret_manager.dart # Secret mode clipboard timer & template resolution engine
+├── test/
+│   ├── app_test.dart   # Exhaustive Model, Storage, CSV/JSON, Secret, and Template unit tests
+│   └── widget_test.dart # App Widget rendering and smoke tests
+├── pubspec.yaml        # Flutter project dependency configuration
+└── README.md           # Documentation & build guide
+```
+
+---
+
+## 🛠 Build Instructions
+
+### Prerequisites
+1. Install [Flutter SDK](https://docs.flutter.dev/get-started/install). Ensure `flutter doctor` passes successfully.
+2. For desktop builds, ensure you have the appropriate native compiler toolchain installed.
+
+### 🐧 1. Linux Desktop
+Install build dependencies (on Ubuntu/Debian):
+```bash
+sudo apt-get update
+sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev lld
+```
+Build the release bundle:
+```bash
+flutter build linux --release
+```
+The compiled binary can be found under:
+`build/linux/x64/release/bundle/cmdclip`
+
+### 🪟 2. Windows Desktop
+Ensure you have "Desktop development with C++" installed via Visual Studio Installer.
+Build the release bundle:
+```bash
+flutter build windows --release
+```
+The executable can be found under:
+`build\windows\x64\release\runner\cmdclip.exe`
+
+### 🤖 3. Android Mobile
+Ensure Android SDK & command-line tools are installed.
+Build the release APK:
+```bash
+flutter build apk --release
+```
+The generated APK can be found under:
+`build/app/outputs/flutter-apk/app-release.apk`
+
+---
+
+## 🧪 Running Tests
+
+A comprehensive unit, integration, and widget test suite is included. To execute all tests, run:
+```bash
+flutter test
+```
+
+---
+
+## GPL-3.0 License
+© M5 Dev. Licensed under the GNU General Public License v3.0. See [LICENSE](LICENSE) for details.
